@@ -1,0 +1,320 @@
+---
+title: Introduzione
+description: Installazione di YouKey SDK su Android e iOS; configurazione di repository e token, dipendenze, configurazione iniziale e verifica.
+---
+
+import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
+
+## Scopo
+
+Questa pagina descrive l'installazione dell'SDK, dalla configurazione del
+repository fino a un'integrazione funzionante e con pinning. L'SDK viene
+installato una sola volta all'avvio del processo; la sua configurazione è
+immutabile dopo l'installazione.
+
+## Prerequisiti
+
+<Tabs syncKey="platform">
+<TabItem label="Android">
+
+- Un'applicazione Android con `minSdk` 24 (Android 7.0) o superiore.
+- Un token di accesso per l'SDK, fornito da Alosys.
+- L'applicazione esegue le richieste HTTP con OkHttp (direttamente o tramite Retrofit) oppure con `HttpURLConnection`.
+
+</TabItem>
+<TabItem label="iOS">
+
+- Xcode 15 o successivo.
+- Un deployment target iOS 14 o successivo.
+- Un token di accesso per l'SDK, fornito da Alosys. Non è necessario alcun
+  accesso al codice sorgente o al repository; il manifest del pacchetto è
+  pubblico e il binario firmato viene recuperato con il token.
+
+</TabItem>
+</Tabs>
+
+## Autenticazione
+
+L'autenticazione si configura una sola volta per macchina.
+
+<Tabs syncKey="platform">
+<TabItem label="Android">
+
+L'SDK è distribuito da un repository Maven. Configura il token di accesso come
+proprietà Gradle nel file utente `~/.gradle/gradle.properties`, fuori dalla
+directory del progetto, in modo che non venga committato nel controllo di
+versione:
+
+```properties
+youkeyToken=<your-access-token>
+```
+
+</TabItem>
+<TabItem label="iOS">
+
+Swift Package Manager legge il token dal file `~/.netrc`. Aggiungi la riga
+seguente, creando il file se non esiste, e limitane i permessi:
+
+```
+machine dl.cloudsmith.io login token password <your-access-token>
+```
+
+```bash
+chmod 600 ~/.netrc
+```
+
+Il token non entra nel progetto né nel controllo di versione. Negli ambienti
+CI, scrivi questo file da un secret sicuro prima di risolvere i pacchetti.
+
+</TabItem>
+</Tabs>
+
+## Aggiungi l'SDK
+
+<Tabs syncKey="platform">
+<TabItem label="Android">
+
+L'SDK è distribuito da un repository Maven (consigliato), oppure fornito come
+file AAR per l'installazione locale (offline).
+
+#### Metodo 1: Repository Maven (consigliato)
+
+<Steps>
+
+1. Aggiungi il repository in `settings.gradle.kts`, dentro
+   `dependencyResolutionManagement { repositories { … } }`:
+
+   ```kotlin
+   maven {
+       url = uri("https://dl.cloudsmith.io/basic/youkey/youkey-sdk/maven/")
+       credentials {
+           username = "token"                                          // the literal string "token"
+           password = providers.gradleProperty("youkeyToken").orNull ?: ""
+       }
+   }
+   ```
+
+2. Aggiungi la dipendenza in `app/build.gradle.kts`. Se il `minSdk` della tua
+   applicazione è inferiore a 26, abilita anche il core-library desugaring
+   (entrambe le righe nell'esempio sotto): l'SDK usa classi Java di data e ora
+   che Android include solo dalla versione 8.0, e il desugaring inserisce
+   nell'applicazione una copia di compatibilità, così che l'SDK funzioni anche
+   su Android 7. Se il `minSdk` è 26 o superiore, puoi omettere le due righe
+   di desugaring. Quando il desugaring è necessario ma non abilitato, la build
+   fallisce con un errore esplicito.
+
+   ```kotlin
+   android {
+       compileOptions {
+           isCoreLibraryDesugaringEnabled = true
+       }
+   }
+
+   dependencies {
+       implementation("it.alosys:youkey-sdk:2.1.0")
+       coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.4")
+
+       // OkHttp is declared compileOnly by the SDK; provide it at runtime.
+       implementation("com.squareup.okhttp3:okhttp:4.12.0")
+   }
+   ```
+
+   L'SDK include regole ProGuard/R8 per il consumer; la minificazione di
+   release non rimuove né rinomina l'API.
+
+3. Dichiara il permesso Internet in `AndroidManifest.xml`:
+
+   ```xml
+   <uses-permission android:name="android.permission.INTERNET" />
+   ```
+
+</Steps>
+
+Se Gradle non riesce a risolvere `it.alosys:youkey-sdk`, il token di accesso è
+mancante o errato; la risoluzione fallisce con HTTP 401 o 403. Un errore di
+core-library desugaring o di metadati AAR indica che il passo 2 non è stato
+completato.
+
+#### Metodo 2: AAR locale (offline)
+
+Alosys fornisce l'SDK come file AAR. Collocalo nella cartella `libs/` del modulo
+applicativo (per esempio `app/libs/youkey-sdk-2.1.0.aar`) e committalo.
+
+Una dipendenza da file non risolve alcuna dipendenza transitiva, pertanto le
+dipendenze a runtime dell'SDK vanno dichiarate esplicitamente. È per questo che
+`androidx.security:security-crypto` compare qui e non nel Metodo 1, dove il POM
+pubblicato la fornisce. Aggiungi quanto segue in `app/build.gradle.kts`. Il
+core-library desugaring è necessario solo quando il `minSdk` è inferiore a 26,
+per il motivo descritto nel Metodo 1; ometti le due righe di desugaring quando
+il `minSdk` è 26 o superiore.
+
+```kotlin
+android {
+    compileOptions {
+        isCoreLibraryDesugaringEnabled = true   // only if minSdk < 26
+    }
+}
+
+dependencies {
+    implementation(files("libs/youkey-sdk-2.1.0.aar"))
+    implementation("androidx.security:security-crypto:1.1.0-alpha06")
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.4")   // only if minSdk < 26
+}
+```
+
+Non è richiesto alcun repository Maven né token di accesso. Dichiara il permesso
+Internet in `AndroidManifest.xml` come mostrato nel Metodo 1.
+
+</TabItem>
+<TabItem label="iOS">
+
+L'SDK si installa con Swift Package Manager: dal pacchetto remoto
+(consigliato), oppure dall'XCFramework fornito come pacchetto locale (offline).
+
+#### Metodo 1: Swift Package Manager (consigliato)
+
+In Xcode, scegli **File ▸ Add Package Dependencies…** e inserisci:
+
+```
+https://github.com/Alosys-Communications-Srl/youkey-sdk-swift.git
+```
+
+Seleziona **Up to Next Major Version** da `2.1.0`, aggiungi il pacchetto e
+collega il prodotto **YoukeySDK** al target dell'applicazione. Swift Package
+Manager scarica il binario firmato, ne verifica il checksum e si autentica con
+il token configurato al passo precedente.
+
+#### Metodo 2: Pacchetto Swift locale (offline)
+
+Alosys distribuisce l'SDK come pacchetto Swift. Estrailo nel repository del tuo
+progetto, per convenzione in una cartella `Vendor/` (per esempio
+`Vendor/YoukeySDK/`), e committalo; un pacchetto locale è referenziato tramite
+percorso, quindi deve restare in una posizione stabile e sotto controllo di
+versione.
+
+In Xcode, scegli **File ▸ Add Package Dependencies… ▸ Add Local…**, seleziona la
+cartella `YoukeySDK` e collega il prodotto **YoukeySDK** al target
+dell'applicazione. Swift Package Manager collega e incorpora il framework; non è
+richiesto alcun token di accesso.
+
+</TabItem>
+</Tabs>
+
+## Configura e installa
+
+Installa l'SDK una sola volta all'avvio dell'applicazione, prima che
+l'applicazione esegua qualsiasi richiesta di rete. La configurazione è
+immutabile dopo l'installazione.
+
+<Tabs syncKey="platform">
+<TabItem label="Android">
+
+```kotlin
+import android.app.Application
+import android.util.Log
+import it.alosys.youkey.YoukeySDK
+import it.alosys.youkey.config.EnforcementMode
+import it.alosys.youkey.config.TlsVersion
+
+class DemoApp : Application() {
+    override fun onCreate() {
+        super.onCreate()
+        val config = YoukeySDK.config {
+            minTlsVersion = TlsVersion.TLS_1_2   // default
+            blockCleartext = true                 // default
+            pin("api.example.com") {
+                publicKeyHash("sha256/AAAA…")     // primary
+                publicKeyHash("sha256/BBBB…")     // backup (minimum of two)
+                includeSubdomains = true
+                expiresAt = "2027-06-01"          // ISO-8601 yyyy-MM-dd, required
+                enforcementMode = EnforcementMode.ENFORCE
+            }
+            onViolation { violation -> Log.w("youkey", violation.debugDescription) }
+            debugMode = BuildConfig.DEBUG          // must be false in release
+        }
+        YoukeySDK.install(this, config)
+    }
+}
+```
+
+Costruisci l'`OkHttpClient` usando l'interceptor, la socket factory, il trust
+manager e l'hostname verifier dell'SDK:
+
+```kotlin
+val client = OkHttpClient.Builder()
+    .addInterceptor(YoukeySDK.okHttpInterceptor())
+    .sslSocketFactory(YoukeySDK.sslSocketFactory(), YoukeySDK.trustManager())
+    .hostnameVerifier(YoukeySDK.hostnameVerifier())
+    .build()
+```
+
+`install()` registra inoltre l'SDK come default `HttpsURLConnection` a livello
+di processo; passa `hookHttpURLConnection = false` per disabilitare questo
+comportamento.
+
+</TabItem>
+<TabItem label="iOS">
+
+```swift
+import YoukeySDK
+
+let config = try Youkey.Configuration.builder()
+    .minTlsVersion(.tlsV12)
+    .blockCleartext(true)
+    .pin(domain: "api.example.com") { pin in
+        pin.publicKeyHash("sha256/AAAA…")   // primary
+        pin.publicKeyHash("sha256/BBBB…")   // backup (minimum of two)
+        pin.includeSubdomains = true
+        pin.expiresAt = "2027-06-01"        // ISO-8601 yyyy-MM-dd, required
+    }
+    .onViolation { violation in print(violation.debugDescription) }
+    .build()
+Youkey.install(config)
+```
+
+Costruisci la `URLSession` usando il delegate e la configurazione di sessione
+dell'SDK:
+
+```swift
+let session = URLSession(
+    configuration: Youkey.sessionConfiguration(),
+    delegate: Youkey.urlSessionDelegate(),
+    delegateQueue: nil)
+```
+
+Per Alamofire, fornisci `Youkey.serverTrustEvaluator()` come valutatore di
+trust.
+
+</TabItem>
+</Tabs>
+
+## Comportamento
+
+Dopo l'installazione:
+
+- Le richieste verso un dominio con pinning la cui catena di certificati non
+  corrisponde a un pin configurato sollevano `CERTIFICATE_PINNING_FAILED` e la
+  connessione viene interrotta.
+- Le richieste verso domini senza pinning usano la validazione di trust
+  standard della piattaforma.
+- Le richieste non-TLS sollevano `CLEARTEXT_NOT_PERMITTED` prima dell'apertura
+  della connessione.
+- Ogni violazione viene recapitata in modo sincrono al callback `onViolation`.
+
+## Verifica
+
+1. Invia una richiesta al dominio con pinning con il pin corretto e conferma
+   che abbia esito positivo.
+2. Instrada l'applicazione attraverso un proxy di intercettazione che presenta
+   un certificato attendibile per la CA e conferma che la richiesta al dominio
+   con pinning fallisca con `CERTIFICATE_PINNING_FAILED`.
+3. Invia una richiesta `http://` e conferma che fallisca con
+   `CLEARTEXT_NOT_PERMITTED`.
+
+## Passi successivi
+
+- [Pinning dei certificati](/youkey-sdk-docs/it/guides/pinning/): il modello dei
+  pin completo.
+- [Aggiornamento dei pin da remoto](/youkey-sdk-docs/it/guides/remote-pins/):
+  rotazione dei pin senza una release dell'applicazione.

@@ -1,0 +1,42 @@
+name: Deploy docs to GitHub Pages
+
+# Builds the Astro Starlight site and publishes it to GitHub Pages.
+# This repo contains ONLY the public documentation site — no SDK source.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Allow one concurrent deployment; don't cancel an in-progress production deploy.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install, build, and upload the Astro site
+        uses: withastro/action@v3
+        # withastro/action runs `npm ci && npm run build` and uploads the
+        # Pages artifact from ./dist automatically.
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
